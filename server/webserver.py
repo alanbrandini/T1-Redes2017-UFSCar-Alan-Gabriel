@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 import cgi 
 import cgitb
-# import backend
+import backend
 cgitb.enable()
 
 '''
@@ -28,9 +28,8 @@ formKeys = form.keys()					# Pega as Keys dos dados submetidos
 if 'submit' in formKeys:
 	formKeys.remove('submit')			# Remove a Key Submit, enviada atraves do botao 'enviar'
 
-print("Content-Type: text/html;charset=utf-8\r\n\r\n")
-print ("Olar<br>")    
-print("Hello World!<br><br>")
+print("Content-Type: text/html;charset=utf-8\r\n\r\n")  
+
 for keys in formKeys: 
 	print'<p>name: ', keys, '</p>'
 print list(formKeys)
@@ -38,7 +37,8 @@ print("<br>")
 
 print list(form) 	
 print '<p>', getData(form), '</p>' 
+	
+instructionsList =  getData(form)
 
-# print '<p> Teste para o Alan: ', form.getvalue('maq1-ps')
-
-# backend.passaParametro('Me comuniquei! Hello World!')
+# Chamada da funcao do backend para enviar as instrucoes para os daemons
+backend.packetSender(instructionsList, '127.0.0.1')
