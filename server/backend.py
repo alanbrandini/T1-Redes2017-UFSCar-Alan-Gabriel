@@ -28,7 +28,7 @@ def bin2ip(ip):
 '''
 
 def decode_string_binary(s):
-	return ''.join(format(ord(x), 'b') for x in s)
+	return ''.join(format(ord(x), 'b').zfill(8) for x in s)
 	
 '''
 	Funcao decode_binary_string(s):
@@ -75,17 +75,17 @@ def vChecksum(packet):
 
 '''
 	Funcao packetConstructor():
-		Funcao que constroi o header do pacote. 
+		Funcao que constroi o header do pacote.
 '''	
 
-def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, flags):
+def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, id, flags):
 
 	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = '0010' 								# Versao do protocolo = 2
 	ihl = '0000'									# Inicialmente definido como 0, calculado abaixo com base no tamanho total do pacote 
 	TOS = '00000000' 								# Type of Service, sempre sera 0
 	total_length = '0000000000000000' 				# Tamanho total do pacote, calculado posteriormente
-	identification = '0000000000000000'				# Numero de sequencia a ser checado com a resposta
+	identification = id.zfill(16)					# Numero de sequencia a ser checado com a resposta [16 bits]
 	flag_type = flags								# Tres bits, marca se eh requisicao (000) ou resposta (111)
 	FRAGMENT_OFFSET = '0000000000000'				# Treze bits, sempre sera 0
 	header_checksum = '0000000000000000'			# Header Checksum, a ser calculado abaixo e conferido na entrega do pacote 
@@ -129,6 +129,48 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 
 	# Montar o pacote juntando todos os campos do cabecalho e retorna-o
 	return VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding 
+
+'''
+	Funcao unpacker():
+		Funcao que desempacota o pacote. 
+'''	
+
+def unpacker(packet):
+
+	# Verificacao do checksum
+	if (vChecksum(packet) == False):
+		raise Exception('Packet misreceived.')
+		
+	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
+	VERSION = packet[0:4] 							# Versao do protocolo = 2
+	ihl = int(packet[4:8],2)						# Inicialmente definido como 0, calculado abaixo com base no tamanho total do pacote 
+	TOS = packet[8:16] 								# Type of Service, sempre sera 0
+	total_length = int(packet[16:32],2)				# Tamanho total do pacote
+	identification = packet[32:48]					# Numero de sequencia a ser checado [16 bits]
+	flag_type = packet[48:51]						# Tres bits, marca se eh requisicao (000) ou resposta (111)
+	FRAGMENT_OFFSET = packet[51:64]					# Treze bits, sempre sera 0
+	ttl = packet[64:72]								# Campo ttl recebido (Time to Live)
+	protocol = packet[72:80]						# Campo protocol, indica a funcao
+	header_checksum = packet[80:96]					# Header Checksum, verificado acima 
+	srcAddress = bin2ip(packet[96:128])				# Transforma o endereco IP de origem de binario para string
+	dstAddress = bin2ip(packet[128:160])			# Transforma o endereco IP de destino de binario para string
+	
+	# Tamanho do campo options, atraves do campo padding 
+	options = packet[160:len(packet)] 	# Transforma o texto a ser enviado em options de  string para binario 
+	options = decode_binary_string(options)				# Converte para string  
+	options = options.rstrip('\x00')					# Remove o \x00 
+	
+	# Tratamento do campo de protocolo do cabecalho
+	if (protocol == '00000001'):
+		instruction = 'ps'
+	elif (protocol == '00000010'):
+		instruction = 'df'
+	elif (protocol == '00000011'):
+		instruction = 'finger'
+	elif (protocol == '00000100'):
+		instruction = 'uptime'	
+	
+	return identification, ttl, srcAddress, options, instruction
 	
 '''
 	Funcao packetSender():
@@ -138,9 +180,11 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 	
 def packetSender(instructionsList, ipAddress):
 	
+	answers = []
+	
 	for instruction in instructionsList:
 		
-		packet = packetConstructor(instruction, '127.0.0.1', '127.0.0.1', '00001111', '000')	# Construcao do pacote 
+		packet = packetConstructor(instruction, '127.0.0.1', '127.0.0.1', '00001111', '0000000000000001', '000')	# Construcao do pacote 
 		
 		daemon_port = 8000 + instruction[0]
 		
@@ -149,6 +193,12 @@ def packetSender(instructionsList, ipAddress):
 		try:
 			s.connect((ipAddress, daemon_port))
 			s.send(packet)
+			ansPacket = s.recv(1024)
+			identification, ttl, srcAddress, options, instruction = unpacker(ansPacket)
+			answers.append(instruction)
+			answers.append(options)
+			answers.append(ttl)
 		finally:	
 			s.close()
 		
+	return answers
