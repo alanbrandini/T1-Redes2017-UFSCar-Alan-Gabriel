@@ -30,7 +30,7 @@ def bin2ip(ip):
 '''
 
 def decode_string_binary(s):
-	return ''.join(format(ord(x), 'b') for x in s)
+	return ''.join(format(ord(x), 'b').zfill(8) for x in s)
 	
 '''
 	Funcao decode_binary_string(s):
@@ -80,21 +80,21 @@ def vChecksum(packet):
 		Funcao que constroi o header do pacote. 
 '''	
 
-def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, flags):
+def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, id, flags, options_param):
 
 	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = '0010' 								# Versao do protocolo = 2
 	ihl = '0000'									# Inicialmente definido como 0, calculado abaixo com base no tamanho total do pacote 
 	TOS = '00000000' 								# Type of Service, sempre sera 0
 	total_length = '0000000000000000' 				# Tamanho total do pacote, calculado posteriormente
-	identification = '0000000000000000'				# Numero de sequencia a ser checado com a resposta
+	identification = id.zfill(16)					# Numero de sequencia a ser checado com a resposta [16 bits]
 	flag_type = flags								# Tres bits, marca se eh requisicao (000) ou resposta (111)
 	FRAGMENT_OFFSET = '0000000000000'				# Treze bits, sempre sera 0
 	header_checksum = '0000000000000000'			# Header Checksum, a ser calculado abaixo e conferido na entrega do pacote 
 	srcAddress = ip2bin(srcAddress_param)			# Transforma o endereco IP de origem de string para o valor em binario
 	dstAddress = ip2bin(dstAddress_param)			# Transforma o endereco IP de destino de string para o valor em binario
-	options = decode_string_binary(instruction[2]) 	# Transforma o texto a ser enviado em options de  string para binario 
-
+	options = decode_string_binary(options_param) 	# Transforma o texto a ser enviado em options de  string para binario 
+	
 	# Campo Time to Live (ttl, altera o parametro ttl_param); se for requisicao, mantem; se for resposta, decrementa 1
 	if (flag_type == '000'):
 		ttl = ttl_param
@@ -102,13 +102,13 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 		ttl = format((int(ttl_param,2)-1), '08b')		# decremento de 1: transforma a str de bits para int e depois retorna para str de bits
 
 	# Tratamento do campo de protocolo do cabecalho
-	if (instruction[1] == 'ps'):
+	if (instruction == 'ps'):
 		protocol = '00000001'
-	elif (instruction[1] == 'df'):
+	elif (instruction == 'df'):
 		protocol = '00000010'
-	elif (instruction[1] == 'finger'):
+	elif (instruction == 'finger'):
 		protocol = '00000011'
-	elif (instruction[1] == 'uptime'):
+	elif (instruction == 'uptime'):
 		protocol = '00000100'	
 
 	# Calculando IHL
@@ -132,7 +132,54 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 	# Montar o pacote juntando todos os campos do cabecalho e retorna-o
 	return VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding 
 	
+'''
+	Funcao unpacker():
+		Funcao que desempacota o pacote. 
+'''	
 
+def unpacker(packet):
+
+	# Verificacao do checksum
+	if (vChecksum(packet) == False):
+		raise Exception('Packet misreceived.')
+	else:
+		print 'Checksum correct'
+		
+	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
+	VERSION = packet[0:4] 							# Versao do protocolo = 2
+	ihl = int(packet[4:8],2)						# Inicialmente definido como 0, calculado abaixo com base no tamanho total do pacote 
+	TOS = packet[8:16] 								# Type of Service, sempre sera 0
+	total_length = int(packet[16:32],2)				# Tamanho total do pacote
+	identification = packet[32:48]					# Numero de sequencia a ser checado [16 bits]
+	flag_type = packet[48:51]						# Tres bits, marca se eh requisicao (000) ou resposta (111)
+	FRAGMENT_OFFSET = packet[51:64]					# Treze bits, sempre sera 0
+	ttl = packet[64:72]								# Campo ttl recebido (Time to Live)
+	protocol = packet[72:80]						# Campo protocol, indica a funcao
+	header_checksum = packet[80:96]					# Header Checksum, verificado acima 
+	srcAddress = bin2ip(packet[96:128])				# Transforma o endereco IP de origem de binario para string
+	dstAddress = bin2ip(packet[128:160])			# Transforma o endereco IP de destino de binario para string
+	
+	# Tamanho do campo options, atraves do campo padding 
+	options = packet[160:len(packet)]			 	# Transforma o texto a ser enviado em options de  string para binario 
+	options = decode_binary_string(options)				# Converte para string 
+	options = options.rstrip('\x00')				# Remove o \x00 
+	
+	# Tratamento do campo de protocolo do cabecalho
+	if (protocol == '00000001'):
+		instruction = 'ps'
+	elif (protocol == '00000010'):
+		instruction = 'df'
+	elif (protocol == '00000011'):
+		instruction = 'finger'
+	elif (protocol == '00000100'):
+		instruction = 'uptime'	
+	
+	return identification, ttl, srcAddress, options, instruction
+	
+'''
+	Funcao principal: daemon
+'''
+	
 HOST = ''              # Endereco IP do Servidor
 PORT = 8001            # Porta que o Servidor esta
 socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -140,9 +187,13 @@ origem = (HOST, PORT)
 socket_tcp.bind(origem) 		# Torna visivel a porta do servidor para o cliente local conectar
 socket_tcp.listen(1)			# Servidor passa a esperar por uma conexao do cliente 
 while True:
-    con, cliente = socket_tcp.accept() # Inicia conexao apos aceitar solicitacao do cliente 
-    print 'Conectado por', cliente
-    packet = con.recv(1024)
-    print cliente, packet, vChecksum(packet)
-    print 'Finalizando conexao do cliente', cliente
-    con.close() 		# Encerra conexao
+	con, cliente = socket_tcp.accept() # Inicia conexao apos aceitar solicitacao do cliente 
+	print 'Conectado por', cliente
+	packet = con.recv(1024)
+	identification, ttl, srcAddress, options, instruction = unpacker(packet)
+	print cliente, packet, '\nChecksum is: ', vChecksum(packet)
+	print '\n Id: ', identification, ' TTL: ', ttl, ' srcAddress: ', srcAddress, ' Options: ', options, ' Instrc: ', instruction
+	ansPacket = packetConstructor(instruction,srcAddress, srcAddress, ttl, identification, '111', options)
+	con.send(ansPacket)
+	print 'Finalizando conexao do cliente', cliente
+	con.close() 		# Encerra conexao
