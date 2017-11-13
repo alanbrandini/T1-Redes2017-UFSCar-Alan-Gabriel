@@ -136,10 +136,6 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 '''	
 
 def unpacker(packet):
-
-	# Verificacao do checksum
-	if (vChecksum(packet) == False):
-		raise Exception('Packet misreceived.')
 		
 	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = packet[0:4] 							# Versao do protocolo = 2
@@ -155,10 +151,18 @@ def unpacker(packet):
 	srcAddress = bin2ip(packet[96:128])				# Transforma o endereco IP de origem de binario para string
 	dstAddress = bin2ip(packet[128:160])			# Transforma o endereco IP de destino de binario para string
 	
-	# Tamanho do campo options, atraves do campo padding 
-	options = packet[160:len(packet)] 	# Transforma o texto a ser enviado em options de  string para binario 
+	# Verificacao do checksum
+	if (vChecksum(packet[:ihl*32]) == False):
+		raise Exception('Packet misreceived.')
+	
+	# Identificacao do campo options, utlizando o IHL (tamanho do header, com padding)
+	options = packet[160:ihl*32] 						# Transforma o texto a ser enviado em options de  string para binario 
 	options = decode_binary_string(options)				# Converte para string  
 	options = options.rstrip('\x00')					# Remove o \x00 
+	
+	# Identificacao da resposta answer
+	answer = packet[ihl*32:len(packet)]
+	answer = decode_binary_string(answer) # Transforma de binario para string 
 	
 	# Tratamento do campo de protocolo do cabecalho
 	if (protocol == '00000001'):
@@ -170,7 +174,7 @@ def unpacker(packet):
 	elif (protocol == '00000100'):
 		instruction = 'uptime'	
 	
-	return identification, ttl, srcAddress, options, instruction
+	return identification, ttl, srcAddress, options, instruction, answer
 	
 '''
 	Funcao packetSender():
@@ -181,6 +185,7 @@ def unpacker(packet):
 def packetSender(instructionsList, ipAddress):
 	
 	answers = []
+	pktAnswer = []
 	
 	for instruction in instructionsList:
 		
@@ -193,12 +198,13 @@ def packetSender(instructionsList, ipAddress):
 		try:
 			s.connect((ipAddress, daemon_port))
 			s.send(packet)
-			ansPacket = s.recv(1024)
-			identification, ttl, srcAddress, options, instruction = unpacker(ansPacket)
-			answers.append(instruction)
+			ansPacket = s.recv(67000) 				# Recebimento do pacote de resposta 
+			identification, ttl, srcAddress, options, instruction, answer = unpacker(ansPacket)
+			answers = [instruction] 				# Respostas
 			answers.append(options)
-			answers.append(ttl)
+			answers.append(answer)
+			pktAnswer.append(answers) 				# Colecao de respostas 
 		finally:	
 			s.close()
 		
-	return answers
+	return pktAnswer 

@@ -23,22 +23,20 @@ def getData(form):
 
 form = cgi.FieldStorage() 				# Pega os dados submetidos
 
-# Tratamento das keys
-formKeys = form.keys()					# Pega as Keys dos dados submetidos
-if 'submit' in formKeys:
-	formKeys.remove('submit')			# Remove a Key Submit, enviada atraves do botao 'enviar'
-
-print("Content-Type: text/html;charset=utf-8\r\n\r\n")  
-
-for keys in formKeys: 
-	print'<p>name: ', keys, '</p>'
-print list(formKeys)
-print("<br>") 
-
-print list(form) 	
-print '<p>', getData(form), '</p>' 
+print("Content-Type: text/html;charset=utf-8\r\n\r\n")   
 	
 instructionsList =  getData(form)
 
 # Chamada da funcao do backend para enviar as instrucoes para os daemons
-backend.packetSender(instructionsList, '127.0.0.1')
+# print '<p> Resposta: ', backend.packetSender(instructionsList, '127.0.0.1'), '</p>'
+
+try:
+	answerList = backend.packetSender(instructionsList, '127.0.0.1') # Envia dados da pagina para backend e atribui as respostas a variavel
+	for answer in answerList:
+		print '<p>', answer[0], ' ', answer[1], '</p>'
+		dataResponses = answer[2].split('\n')
+		
+		for data in dataResponses:
+			print '<p style = "margin-left: 30px;">', data, '</p>'
+except ValueError:
+	print '<p> Falha ocorrida. Pacote mal-enviado. Verifique os argumentos e tente novamente. </p>'
