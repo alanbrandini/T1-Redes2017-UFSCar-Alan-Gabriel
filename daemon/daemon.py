@@ -1,7 +1,8 @@
-#Daemon - programa a ser replicado em cada maquina para executar os comandos
+# Daemon - programa a ser replicado em cada maquina para executar os comandos
 # Funcoes duplicadas em relacao ao backend.py para que funcione com qualquer backend 
 
 import socket
+import commands 
 
 '''
 	Funcao ip2bin(ip):
@@ -55,7 +56,7 @@ def checksum(packet):
 			checksum = checksum + 1						#	Soma um 1 ao checksum 
 			checksum = (checksum & int(0xFFFF))			# 	Tira o bit de overflow 
 	checksum = int(checksum ^ 65535)					# Realiza o complemento de 1 (atraves de uma xor com 0xFFFF) 
-	return bin(checksum)[2:].zfill(16)								# Retorna o checksum em binario 
+	return bin(checksum)[2:].zfill(16)					# Retorna o checksum em binario 
 	
 '''
 	Funcao vChecksum(packet):
@@ -80,7 +81,7 @@ def vChecksum(packet):
 		Funcao que constroi o header do pacote. 
 '''	
 
-def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, id, flags, options_param):
+def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param, id, flags, options_param, answer_param):
 
 	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = '0010' 								# Versao do protocolo = 2
@@ -93,7 +94,8 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 	header_checksum = '0000000000000000'			# Header Checksum, a ser calculado abaixo e conferido na entrega do pacote 
 	srcAddress = ip2bin(srcAddress_param)			# Transforma o endereco IP de origem de string para o valor em binario
 	dstAddress = ip2bin(dstAddress_param)			# Transforma o endereco IP de destino de string para o valor em binario
-	options = decode_string_binary(options_param) 	# Transforma o texto a ser enviado em options de  string para binario 
+	options = decode_string_binary(options_param) 	# Transforma o texto a ser enviado em options de string para binario 
+	answer = decode_string_binary(answer_param) 	# Transforma o texto a ser enviado em answer de string para binario 
 	
 	# Campo Time to Live (ttl, altera o parametro ttl_param); se for requisicao, mantem; se for resposta, decrementa 1
 	if (flag_type == '000'):
@@ -111,26 +113,29 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 	elif (instruction == 'uptime'):
 		protocol = '00000100'	
 
-	# Calculando IHL
-	ihl = bin(len(VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options)/32)[2:].zfill(4)	
-
 	# Calculando o padding (quanto falta para completar a proxima palavra de 32 bits 
 	if (len(options)%32 == 0):
 		padding = '' 
 	else:	
 		padding = bin(0)[2:].zfill(32-(len(options)%32))
 
-	# Calculando tamanho total (total_length) do pacote 
-	total_length = bin(len(VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding))[2:].zfill(16)
+	# Calculando IHL (contando o padding)
+	ihl = bin(len(VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding)/32)[2:].zfill(4)	
 
-	# Montar o pacote juntando todos os campos do cabecalho e retorna-o
+	# Calculando tamanho total (total_length) do pacote 
+	total_length = format(len(VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding+answer),'016b')
+	if len(total_length) > 16: 						# Caso o tamanho de retorno seja maior do que cabe em 16 bits
+		while len(total_length) != 16:				# Enquanto o numero nao tiver 16 bits 
+			total_length = total_length[1:]			# Remove o mais significativo (Solucao para evitar problemas no vChecksum no backend - ps aux)
+	
+	# Montar o pacote juntando todos os campos do cabecalho e retorna-o (sem a resposta answer) 
 	packet = VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding 
 
-	# Calculando o checksum
+	# Calculando o checksum (sem a resposta answer)
 	header_checksum = checksum(packet)
 
 	# Montar o pacote juntando todos os campos do cabecalho e retorna-o
-	return VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding 
+	return VERSION+ihl+TOS+total_length+identification+flag_type+FRAGMENT_OFFSET+ttl+protocol+header_checksum+srcAddress+dstAddress+options+padding+answer 
 	
 '''
 	Funcao unpacker():
@@ -141,7 +146,7 @@ def unpacker(packet):
 
 	# Verificacao do checksum
 	if (vChecksum(packet) == False):
-		raise Exception('Packet misreceived.')
+		raise ValueError('Packet misreceived.')
 	else:
 		print 'Checksum correct'
 		
@@ -161,7 +166,7 @@ def unpacker(packet):
 	
 	# Tamanho do campo options, atraves do campo padding 
 	options = packet[160:len(packet)]			 	# Transforma o texto a ser enviado em options de  string para binario 
-	options = decode_binary_string(options)				# Converte para string 
+	options = decode_binary_string(options)			# Converte para string 
 	options = options.rstrip('\x00')				# Remove o \x00 
 	
 	# Tratamento do campo de protocolo do cabecalho
@@ -180,20 +185,26 @@ def unpacker(packet):
 	Funcao principal: daemon
 '''
 	
-HOST = ''              # Endereco IP do Servidor
-PORT = 8001            # Porta que o Servidor esta
+HOST = ''             					# Endereco IP do Servidor
+PORT = 8001         					# Porta que o Servidor esta
 socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 origem = (HOST, PORT)
-socket_tcp.bind(origem) 		# Torna visivel a porta do servidor para o cliente local conectar
-socket_tcp.listen(1)			# Servidor passa a esperar por uma conexao do cliente 
+socket_tcp.bind(origem) 				# Torna visivel a porta do servidor para o cliente local conectar
+socket_tcp.listen(1)					# Servidor passa a esperar por uma conexao do cliente 
 while True:
-	con, cliente = socket_tcp.accept() # Inicia conexao apos aceitar solicitacao do cliente 
+	con, cliente = socket_tcp.accept()	# Inicia conexao apos aceitar solicitacao do cliente 
 	print 'Conectado por', cliente
 	packet = con.recv(1024)
 	identification, ttl, srcAddress, options, instruction = unpacker(packet)
-	print cliente, packet, '\nChecksum is: ', vChecksum(packet)
-	print '\n Id: ', identification, ' TTL: ', ttl, ' srcAddress: ', srcAddress, ' Options: ', options, ' Instrc: ', instruction
-	ansPacket = packetConstructor(instruction,srcAddress, srcAddress, ttl, identification, '111', options)
+	if not(('|' in options) or (';' in options) or ('>' in options) or ('&' in options)):			# Tratamento dos comandos maliciosos
+		try:
+			answer = commands.getoutput(instruction+' '+options)
+		except ValueError:
+			answer = 'Invalid character or option inserted. Exception raised.'
+	else:
+		answer = 'Invalid Command. Malicious character present.'
+	print answer
+	ansPacket = packetConstructor(instruction,srcAddress, srcAddress, ttl, identification, '111', options, answer)
 	con.send(ansPacket)
 	print 'Finalizando conexao do cliente', cliente
 	con.close() 		# Encerra conexao
