@@ -2,7 +2,9 @@
 # Funcoes duplicadas em relacao ao backend.py para que funcione com qualquer backend 
 
 import socket
-import commands 
+import commands
+import threading
+import argparse
 
 '''
 	Funcao ip2bin(ip):
@@ -147,8 +149,6 @@ def unpacker(packet):
 	# Verificacao do checksum
 	if (vChecksum(packet) == False):
 		raise ValueError('Packet misreceived.')
-	else:
-		print 'Checksum correct'
 		
 	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = packet[0:4] 							# Versao do protocolo = 2
@@ -180,31 +180,57 @@ def unpacker(packet):
 		instruction = 'uptime'	
 	
 	return identification, ttl, srcAddress, options, instruction
+
+'''
+	Multithreading abaixo: 
+'''
 	
+exitFlag = 0
+
+class myThread (threading.Thread): 					# Classe principal 
+	def __init__(self, port): 						# Funcao de inicio da thread
+		threading.Thread.__init__(self)
+		self.port = port
+	def run(self):
+		daemon(self.port)							# Passa a porta de conexao para executar
+
 '''
 	Funcao principal: daemon
 '''
-	
-HOST = ''             					# Endereco IP do Servidor
-PORT = 8001         					# Porta que o Servidor esta
-socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-origem = (HOST, PORT)
-socket_tcp.bind(origem) 				# Torna visivel a porta do servidor para o cliente local conectar
-socket_tcp.listen(1)					# Servidor passa a esperar por uma conexao do cliente 
-while True:
-	con, cliente = socket_tcp.accept()	# Inicia conexao apos aceitar solicitacao do cliente 
-	print 'Conectado por', cliente
-	packet = con.recv(1024)
-	identification, ttl, srcAddress, options, instruction = unpacker(packet)
-	if not(('|' in options) or (';' in options) or ('>' in options) or ('&' in options)):			# Tratamento dos comandos maliciosos
-		try:
-			answer = commands.getoutput(instruction+' '+options)
-		except ValueError:
-			answer = 'Invalid character or option inserted. Exception raised.'
-	else:
-		answer = 'Invalid Command. Malicious character present.'
-	print answer
-	ansPacket = packetConstructor(instruction,srcAddress, srcAddress, ttl, identification, '111', options, answer)
-	con.send(ansPacket)
-	print 'Finalizando conexao do cliente', cliente
-	con.close() 		# Encerra conexao
+def daemon(port_param):	
+	HOST = ''             					# Endereco IP do Servidor
+	PORT = port_param         				# Porta que o Servidor esta
+	socket_tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+	socket_tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1) 		# Evita erro de reuso da porta
+	origem = (HOST, PORT)					# Define local de conexao 
+	socket_tcp.bind(origem) 				# Torna visivel a porta do servidor para o cliente local conectar
+	socket_tcp.listen(1)					# Servidor passa a esperar por uma conexao do cliente 
+	while True:
+		if exitFlag:
+			threadName.exit()
+		con, cliente = socket_tcp.accept()	# Inicia conexao apos aceitar solicitacao do cliente 
+		print 'Conectado por', cliente
+		packet = con.recv(4096) 			# Recebe pacote do cliente (backend) 
+		identification, ttl, srcAddress, options, instruction = unpacker(packet)
+		if not(('|' in options) or (';' in options) or ('>' in options) or ('&' in options)): # Tratamento dos comandos maliciosos
+			try:
+				answer = commands.getoutput(instruction+' '+options)
+			except ValueError:
+				answer = 'Comando invalido inserido. Nao executado.'
+		else:
+			answer = 'Comando invalido. Caracter malicioso inserido.'
+		ansPacket = packetConstructor(instruction,srcAddress, srcAddress, ttl, identification, '111', options, answer)
+		con.send(ansPacket)					# Envia pacote de resposta ao backend 
+		print 'Finalizando conexao do cliente', cliente
+		con.close() 						# Encerra conexao
+
+'''
+	Tratamento do argumento passado para executar os daemons nas portas corretas
+	Fonte: https://pythonhelp.wordpress.com/2011/11/20/tratando-argumentos-com-argparse/
+'''
+
+if __name__ == "__main__":
+	parser = argparse.ArgumentParser()
+	parser.add_argument('--port', action='store', type=int, dest='port', required=True, help='Porta para executar o daemon.')
+	args = parser.parse_args()
+	myThread(int(args.port)).start() 			# Inicio da thread 
