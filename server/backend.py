@@ -1,5 +1,6 @@
-# Backend
+# Backend - Funcoes duplicadas do Daemon para funcionar com qualquer daemon 
 import socket
+import errno
 
 '''
 	Funcao ip2bin(ip):
@@ -53,7 +54,7 @@ def checksum(packet):
 			checksum = checksum + 1						#	Soma um 1 ao checksum 
 			checksum = (checksum & int(0xFFFF))			# 	Tira o bit de overflow 
 	checksum = int(checksum ^ 65535)					# Realiza o complemento de 1 (atraves de uma xor com 0xFFFF) 
-	return bin(checksum)[2:].zfill(16)								# Retorna o checksum em binario 
+	return bin(checksum)[2:].zfill(16)					# Retorna o checksum em binario 
 	
 '''
 	Funcao vChecksum(packet):
@@ -68,7 +69,7 @@ def vChecksum(packet):
 		if not ((checksum >> 16) == 0):					# Se houver overflow
 			checksum = checksum + 1						#	Soma um 1 ao checksum 
 			checksum = (checksum & int(0xFFFF))			# 	Tira o bit de overflow 
-	if checksum == int(0xFFFF):
+	if checksum == int(0xFFFF):							# Se a soma for 0xFFFF, o pacote chegou inteiro
 		return True
 	else:
 		return False 
@@ -137,7 +138,7 @@ def packetConstructor(instruction, srcAddress_param, dstAddress_param, ttl_param
 
 def unpacker(packet):
 		
-	# Definicao dos campos do pacote; nomes em maiusculo sao constantes
+	# Identificacao dos campos do pacote; nomes em maiusculo sao constantes
 	VERSION = packet[0:4] 							# Versao do protocolo = 2
 	ihl = int(packet[4:8],2)						# Inicialmente definido como 0, calculado abaixo com base no tamanho total do pacote 
 	TOS = packet[8:16] 								# Type of Service, sempre sera 0
@@ -162,7 +163,7 @@ def unpacker(packet):
 	
 	# Identificacao da resposta answer
 	answer = packet[ihl*32:len(packet)]
-	answer = decode_binary_string(answer) # Transforma de binario para string 
+	answer = decode_binary_string(answer) # Transforma de binario para string
 	
 	# Tratamento do campo de protocolo do cabecalho
 	if (protocol == '00000001'):
@@ -184,27 +185,36 @@ def unpacker(packet):
 	
 def packetSender(instructionsList, ipAddress):
 	
-	answers = []
-	pktAnswer = []
+	answers = []			# Resposta de cada execucao 
+	pktAnswer = []			# Colecao de todas as respostas
 	
 	for instruction in instructionsList:
 		
 		packet = packetConstructor(instruction, '127.0.0.1', '127.0.0.1', '00001111', '0000000000000001', '000')	# Construcao do pacote 
 		
-		daemon_port = 8000 + instruction[0]
+		daemon_port = 8000 + instruction[0] 	# Definicao da porta de conexao
 		
 		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		# Tentativa de enviar o pacote para o deamon da instrucao
 		try:
 			s.connect((ipAddress, daemon_port))
 			s.send(packet)
-			ansPacket = s.recv(67000) 				# Recebimento do pacote de resposta 
-			identification, ttl, srcAddress, options, instruction, answer = unpacker(ansPacket)
-			answers = [instruction] 				# Respostas
+			recebe = True 						# Flag 
+			ansPacket = ''						# Pacote inicia vazio 
+			while recebe:						# Enquanto ainda recebe dados 
+				data = s.recv(2048)				# Tenta receber 
+				if not data: recebe = False		# Se nao chegou nada (nao vem mais nada), troca a flag para False
+				ansPacket = ansPacket + data    # Recebimento do pacote de resposta adicionado no fim do que ja recebeu 
+			identification, ttl, srcAddress, options, instructionAns, answer = unpacker(ansPacket)
+			answers = ['Alan&Gabriel@maq'+str(instruction[0])+':~$ '+instructionAns]     		# Respostas
 			answers.append(options)
 			answers.append(answer)
-			pktAnswer.append(answers) 				# Colecao de respostas 
-		finally:	
+			pktAnswer.append(answers)     		# Colecao de respostas
+		except socket.error, v: 				# Tratamento de erro (daemon nao iniciado). Fonte: https://stackoverflow.com/questions/5161167/python-handling-specific-error-codes
+			errorcode=v[0]
+			if errorcode==errno.ECONNREFUSED:
+				print '<p> Conexao recusada. Porta numero', daemon_port, 'nao recebeu. </p>'
+		finally: 
 			s.close()
 		
-	return pktAnswer 
+	return pktAnswer							# Resposta para o Webserver
